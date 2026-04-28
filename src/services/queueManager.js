@@ -9,49 +9,49 @@ export class QueueManager extends EventEmitter {
         super();
         this.isProcessing = false;
         
-        // [CƠ CHẾ CIRCUIT BREAKER] Quản lý trạng thái Ngủ đông
-        this.consecutiveFailures = 0;   // Bộ đếm lỗi nghiêm trọng liên tiếp
-        this.isHibernating = false;     // Cờ khóa luồng hệ thống
-        this.hibernationLevel = 1;      // Mốc 1: 1 tiếng, Mốc >=2: 2 tiếng
+        // [CƠ CHẾ CIRCUIT BREAKER]
+        this.consecutiveFailures = 0;   
+        this.isHibernating = false;     
+        this.hibernationLevel = 1;      
+        
+        // [THÊM MỚI] Dữ liệu giám sát ngủ đông để gửi cho Frontend
+        this.hibernationCount = 0; // Đếm số lần đã đi ngủ
+        this.hibernationStats = null; // Lưu chi tiết thời gian
     }
 
     async initDB() {
         try {
-            // 1. Phục hồi Zombie Jobs (Bị ngắt do server restart)
             const result = await Job.updateMany({ status: 'processing' }, { $set: { status: 'pending' } });
             if (result.modifiedCount > 0) {
                 console.log(`♻️ [QUEUE] Đã khôi phục ${result.modifiedCount} tác vụ (Zombie Jobs) về trạng thái Pending.`);
             }
-            
-            // 2. Kích hoạt radar quét lỗi định kỳ (30 phút thử lại)
             this.startFailedJobsSweeper();
-            
-            // 3. Khởi động vòng lặp Worker
             this.startWorker(); 
         } catch (error) {
             console.error('❌ [QUEUE] Lỗi khi khôi phục Zombie Jobs:', error);
         }
     }
 
-    // [TÍNH NĂNG 1] LUỒNG QUÉT VÀ PHỤC HỒI LỖI TẠM THỜI
+    // [THÊM MỚI] API Nội bộ cho Controller lấy trạng thái hiện tại
+    getSystemStatus() {
+        return {
+            isHibernating: this.isHibernating,
+            stats: this.hibernationStats
+        };
+    }
+
     startFailedJobsSweeper() {
-        // Chạy ngầm kiểm tra mỗi 15 phút (900,000 ms)
         setInterval(async () => {
-            if (this.isHibernating) return; // Nếu đang ngủ đông thì không quét
-            
+            if (this.isHibernating) return; 
             try {
-                // Lấy mốc thời gian cách đây 30 phút
                 const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000);
-                
-                // Tìm các file 'failed' đã nằm im hơn 30 phút và đẩy về 'pending'
                 const result = await Job.updateMany(
                     { status: 'failed', updatedAt: { $lte: thirtyMinsAgo } },
                     { $set: { status: 'pending', error: '🔄 Tự động thử lại sau 30 phút...' } }
                 );
-                
                 if (result.modifiedCount > 0) {
                     console.log(`\n♻️ [AUTO-RECOVERY] Đã tìm thấy và đưa ${result.modifiedCount} files bị lỗi tạm thời quay lại hàng đợi.`);
-                    this.startWorker(); // Kích hoạt lại worker nếu đang rảnh
+                    this.startWorker(); 
                 }
             } catch (error) {
                 console.error('❌ [AUTO-RECOVERY] Lỗi khi truy vấn Database:', error.message);
@@ -59,30 +59,41 @@ export class QueueManager extends EventEmitter {
         }, 15 * 60 * 1000);
     }
 
-    // [TÍNH NĂNG 2] CƠ CHẾ NGỦ ĐÔNG (CIRCUIT BREAKER)
     triggerHibernation() {
-        this.isHibernating = true; // Khóa Worker
+        this.isHibernating = true; 
+        this.hibernationCount++; // Tăng số chu kỳ đã ngủ
         
         const sleepHours = this.hibernationLevel === 1 ? 1 : 2;
         const sleepMs = sleepHours * 60 * 60 * 1000;
-        const wakeupTime = new Date(Date.now() + sleepMs).toLocaleTimeString('vi-VN');
         
-        console.log(`\n🛑 [CIRCUIT BREAKER] KÍCH HOẠT NGỦ ĐÔNG TOÀN HỆ THỐNG!`);
-        console.log(`   Nguyên nhân: Vượt quá 10 lỗi nghiêm trọng liên tiếp (Khả năng cạn kiệt API Quota).`);
-        console.log(`   Thời gian ngủ: ${sleepHours} tiếng.`);
-        console.log(`   Dự kiến đánh thức lúc: ${wakeupTime}\n`);
+        // Cập nhật thống kê
+        this.hibernationStats = {
+            startTime: new Date().toISOString(),
+            wakeupTime: new Date(Date.now() + sleepMs).toLocaleTimeString('vi-VN'),
+            sleepHours: sleepHours,
+            hibernationCount: this.hibernationCount
+        };
 
-        // Tăng level ngủ đông cho lần chạm đáy tiếp theo
+        // Bắn tín hiệu sang Controller để đẩy xuống SSE Frontend
+        this.emit('systemStatusChanged', this.getSystemStatus());
+        
+        console.log(`\n🛑 [CIRCUIT BREAKER] KÍCH HOẠT NGỦ ĐÔNG!`);
+        console.log(`   Thời gian ngủ: ${sleepHours} tiếng. Thức dậy lúc: ${this.hibernationStats.wakeupTime}`);
+        console.log(`   Chu kỳ ngủ thứ: ${this.hibernationCount}\n`);
+
         if (this.hibernationLevel === 1) {
             this.hibernationLevel = 2;
         }
 
-        // Hẹn giờ tự động thức giấc
         setTimeout(() => {
-            console.log(`\n🟢 [CIRCUIT BREAKER] HỆ THỐNG ĐÃ THỨC DẬY SAU ${sleepHours} TIẾNG NGỦ ĐÔNG.`);
-            this.consecutiveFailures = 0; // Reset lại bộ đếm lỗi
-            this.isHibernating = false;   // Mở khóa Worker
-            this.startWorker();           // Bơm máu lại cho hệ thống
+            console.log(`\n🟢 [CIRCUIT BREAKER] HỆ THỐNG ĐÃ THỨC DẬY.`);
+            this.consecutiveFailures = 0; 
+            this.isHibernating = false;   
+            this.hibernationStats = null;
+            
+            // Báo cho Frontend biết đã thức
+            this.emit('systemStatusChanged', this.getSystemStatus());
+            this.startWorker();           
         }, sleepMs);
     }
 
@@ -95,14 +106,12 @@ export class QueueManager extends EventEmitter {
             status: 'pending'
         });
         await job.save();
-        
         this.startWorker();
         return job;
     }
 
     async getJobsSummary() {
-        const jobs = await Job.find({}, 'jobId originalName folderName status error').sort({ createdAt: -1 });
-        return jobs;
+        return await Job.find({}, 'jobId originalName folderName status error').sort({ createdAt: -1 });
     }
 
     async getJobResult(jobId) {
@@ -110,7 +119,6 @@ export class QueueManager extends EventEmitter {
     }
 
     async startWorker() {
-        // [QUAN TRỌNG] Chặn đứng luồng nếu đang xử lý hoặc đang bị khóa bởi Circuit Breaker
         if (this.isProcessing || this.isHibernating) return; 
         
         try {
@@ -123,7 +131,6 @@ export class QueueManager extends EventEmitter {
             this.isProcessing = true;
             nextJob.status = 'processing';
             await nextJob.save();
-
             this.emit('jobUpdated', nextJob); 
 
             const emitLog = (msg) => {
@@ -132,12 +139,10 @@ export class QueueManager extends EventEmitter {
             };
 
             try {
-                emitLog(`Đang đọc file từ ổ cứng lên RAM...`);
+                emitLog(`Đang đọc file...`);
                 const fileBuffer = fs.readFileSync(nextJob.filePath);
-                
                 emitLog(`Đang băm PDF...`);
                 const chunkBuffers = await processPdf(fileBuffer);
-                
                 const mdResult = await processTranslation(chunkBuffers, emitLog);
 
                 nextJob.status = 'completed';
@@ -148,6 +153,7 @@ export class QueueManager extends EventEmitter {
                 // [THÀNH CÔNG] Reset toàn bộ bộ đếm Circuit Breaker về mức an toàn
                 this.consecutiveFailures = 0;
                 this.hibernationLevel = 1; 
+                this.hibernationCount = 0; // Đã dịch thành công thì reset bộ đếm chu kỳ ngủ
 
                 if (fs.existsSync(nextJob.filePath)) {
                     fs.unlinkSync(nextJob.filePath);
@@ -157,25 +163,20 @@ export class QueueManager extends EventEmitter {
                 nextJob.status = 'failed';
                 nextJob.error = error.message;
                 await nextJob.save();
-                emitLog(`❌ Lỗi quá trình dịch: ${error.message}`);
+                emitLog(`❌ Lỗi: ${error.message}`);
                 
-                // [LỖI NGHIÊM TRỌNG] Tăng bộ đếm lỗi
                 this.consecutiveFailures++;
-                console.log(`⚠️ [CẢNH BÁO RATE LIMIT] Số file lỗi liên tiếp: ${this.consecutiveFailures}/10`);
-
             } finally {
                 this.emit('jobUpdated', nextJob); 
                 this.isProcessing = false;
                 
-                // [ĐIỀU HƯỚNG WORKER] 
                 if (this.consecutiveFailures >= 10) {
-                    this.triggerHibernation(); // Vượt quá 10 lỗi -> Ngủ đông
+                    this.triggerHibernation(); 
                 } else {
-                    this.startWorker(); // Ngược lại -> Đệ quy gọi Job tiếp theo
+                    this.startWorker(); 
                 }
             }
         } catch (dbError) {
-            console.error('❌ [QUEUE] Lỗi Database trong quá trình quét Hàng đợi:', dbError);
             this.isProcessing = false;
             setTimeout(() => this.startWorker(), 5000);
         }

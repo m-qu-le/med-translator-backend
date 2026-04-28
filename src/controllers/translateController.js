@@ -80,10 +80,18 @@ export const streamLogs = (req, res) => {
         res.write(`data: ${JSON.stringify(payload)}\n\n`);
     };
 
+    // [THÊM MỚI] Lắng nghe sự thay đổi trạng thái Ngủ đông
+    const onSystemStatusChanged = (statusPayload) => {
+        const payload = { type: 'systemStatus', data: statusPayload };
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    translationQueue.on('systemStatusChanged', onSystemStatusChanged);
     translationQueue.on('jobUpdated', onJobUpdated);
     translationQueue.on('jobLog', onJobLog);
 
     req.on('close', () => {
+        translationQueue.off('systemStatusChanged', onSystemStatusChanged); // Bổ sung off event
         translationQueue.off('jobUpdated', onJobUpdated);
         translationQueue.off('jobLog', onJobLog);
         clearInterval(heartbeat); // Ngăn rò rỉ bộ nhớ (Memory Leak)
@@ -104,5 +112,36 @@ export const deleteJob = async (req, res) => {
         res.status(200).json({ message: 'Đã xóa tiến trình thành công.' });
     } catch (error) {
          res.status(500).json({ error: error.message });
+    }
+};
+
+// API 6: Xóa hàng loạt tiến trình (Tối ưu Database I/O bằng deleteMany)
+export const bulkDeleteJobs = async (req, res) => {
+    try {
+        const { jobIds } = req.body; // Nhận mảng các jobId từ Frontend
+        
+        if (!jobIds || !Array.isArray(jobIds)) {
+            return res.status(400).json({ error: 'Danh sách ID không hợp lệ.' });
+        }
+
+        // Xóa một lần toàn bộ các document có jobId nằm trong mảng
+        const result = await Job.deleteMany({ jobId: { $in: jobIds } });
+        
+        res.status(200).json({ 
+            message: `Đã dọn dẹp thành công ${result.deletedCount} tiến trình.`, 
+            deletedCount: result.deletedCount 
+        });
+    } catch (error) {
+         res.status(500).json({ error: error.message });
+    }
+};
+
+// API 7: Lấy trạng thái hệ thống (Kiểm tra xem có đang ngủ đông không)
+export const getSystemStatus = (req, res) => {
+    try {
+        const status = translationQueue.getSystemStatus();
+        res.status(200).json(status);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 };

@@ -5,7 +5,9 @@ import {
     getJobsSummary, 
     getJobResult, 
     streamLogs,
-    deleteJob 
+    deleteJob,
+    bulkDeleteJobs,
+    getSystemStatus // [THÊM MỚI]
 } from '../controllers/translateController.js'; 
 
 const router = express.Router();
@@ -16,12 +18,18 @@ router.post('/', upload.array('files', 100), uploadFiles);
 
 // 2. Các API lấy trạng thái và kết quả
 router.get('/jobs', getJobsSummary);
+router.get('/status', getSystemStatus); // [THÊM MỚI] Route lấy trạng thái hệ thống
 router.get('/jobs/:jobId/result', getJobResult);
 
 // 3. API Stream Server-Sent Events (SSE)
 router.get('/stream', streamLogs);
 
-// 4. API Xóa tiến trình
+// [THÊM MỚI] 4. API Xóa tiến trình hàng loạt 
+// Định tuyến POST /bulk-delete (Nhận mảng jobIds qua req.body)
+router.post('/bulk-delete', bulkDeleteJobs);
+
+// 5. API Xóa tiến trình đơn lẻ
+// Định tuyến DELETE /jobs/:jobId
 router.delete('/jobs/:jobId', deleteJob);
 
 export default router;
