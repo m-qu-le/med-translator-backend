@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Tool Dịch Y Khoa</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        .box { border: 1px solid #ccc; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:disabled { background: #ccc; }
+        pre { background: #f4f4f4; padding: 15px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+
+    <h2>🚀 Công cụ Test API Dịch Thuật</h2>
+    
+    <div class="box">
+        <input type="file" id="fileInput" accept="application/pdf" />
+        <button id="uploadBtn" onclick="uploadFile()">Gửi lên AI Dịch</button>
+    </div>
+
+    <h3>Kết quả trả về (Markdown):</h3>
+    <pre id="result">Kết quả sẽ hiển thị ở đây...</pre>
+
+    <script>
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const resultBox = document.getElementById('result');
+            const btn = document.getElementById('uploadBtn');
+
+            if (fileInput.files.length === 0) {
+                alert('Vui lòng chọn một file PDF!');
+                return;
+            }
+
+            // Đóng gói file vào FormData (Y hệt cách React sẽ làm)
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            // Cập nhật giao diện
+            btn.disabled = true;
+            btn.innerText = "⏳ Đang dịch... Vui lòng đợi (Có thể mất vài phút)";
+            resultBox.innerText = "Hệ thống đang chạy, bạn hãy mở Terminal của VS Code lên để xem tiến trình nhé!";
+
+            try {
+                // Gọi xuống Backend của chúng ta
+                const response = await fetch('http://localhost:5000/api/translate', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    resultBox.innerText = data.markdown;
+                } else {
+                    resultBox.innerText = "❌ Lỗi: " + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                resultBox.innerText = "❌ Không thể kết nối tới server. Server đã chạy chưa?";
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Gửi lên AI Dịch";
+            }
+        }
+    </script>
+</body>
+</html>
