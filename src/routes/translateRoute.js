@@ -4,7 +4,8 @@ import {
     uploadFiles, 
     getJobsSummary, 
     getJobResult, 
-    streamLogs 
+    streamLogs,
+    deleteJob 
 } from '../controllers/translateController.js'; 
 
 const router = express.Router();
@@ -19,5 +20,8 @@ router.get('/jobs/:jobId/result', getJobResult);
 
 // 3. API Stream Server-Sent Events (SSE)
 router.get('/stream', streamLogs);
+
+// 4. API Xóa tiến trình
+router.delete('/jobs/:jobId', deleteJob);
 
 export default router;

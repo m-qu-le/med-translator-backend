@@ -1,4 +1,5 @@
 import { translationQueue } from '../services/queueManager.js';
+import Job from '../models/jobModel.js';
 
 // API 1: Bọc try-catch, dùng Promise.all để ghi đa file vào DB
 export const uploadFiles = async (req, res) => {
@@ -79,4 +80,20 @@ export const streamLogs = (req, res) => {
         clearInterval(heartbeat); // Ngăn rò rỉ bộ nhớ (Memory Leak)
         res.end();
     });
+};
+
+// API 5: Xóa tiến trình khỏi Database
+export const deleteJob = async (req, res) => {
+    try {
+        const { jobId } = req.params;
+        const deletedJob = await Job.findOneAndDelete({ jobId });
+        
+        if (!deletedJob) {
+            return res.status(404).json({ error: 'Không tìm thấy tiến trình để xóa.' });
+        }
+        
+        res.status(200).json({ message: 'Đã xóa tiến trình thành công.' });
+    } catch (error) {
+         res.status(500).json({ error: error.message });
+    }
 };
