@@ -17,6 +17,9 @@ export class QueueManager extends EventEmitter {
         // [THÊM MỚI] Dữ liệu giám sát ngủ đông để gửi cho Frontend
         this.hibernationCount = 0; // Đếm số lần đã đi ngủ
         this.hibernationStats = null; // Lưu chi tiết thời gian
+        
+        // [THÊM MỚI] Lưu trữ tham chiếu Timeout để hủy khi cần Ép thức dậy
+        this.hibernationTimer = null; 
     }
 
     async initDB() {
@@ -38,6 +41,31 @@ export class QueueManager extends EventEmitter {
             isHibernating: this.isHibernating,
             stats: this.hibernationStats
         };
+    }
+
+    // [THÊM MỚI] Hàm ép hệ thống thức dậy ngay lập tức
+    forceWakeUp() {
+        if (!this.isHibernating) return false;
+
+        console.log(`\n⚡ [CIRCUIT BREAKER] ÉP THỨC DẬY THỦ CÔNG (FORCE WAKE-UP)!`);
+        
+        // Hủy bỏ bộ đếm thời gian ngủ đông đang chạy
+        if (this.hibernationTimer) {
+            clearTimeout(this.hibernationTimer);
+            this.hibernationTimer = null;
+        }
+
+        // Reset toàn bộ trạng thái lỗi
+        this.consecutiveFailures = 0;
+        this.isHibernating = false;
+        this.hibernationStats = null;
+
+        // Bắn tín hiệu sang Controller để cập nhật UI ngay lập tức
+        this.emit('systemStatusChanged', this.getSystemStatus());
+        
+        // Khởi động lại luồng xử lý
+        this.startWorker();
+        return true;
     }
 
     startFailedJobsSweeper() {
@@ -85,11 +113,13 @@ export class QueueManager extends EventEmitter {
             this.hibernationLevel = 2;
         }
 
-        setTimeout(() => {
+        // Gắn biến this.hibernationTimer thay vì gọi setTimeout trơn
+        this.hibernationTimer = setTimeout(() => {
             console.log(`\n🟢 [CIRCUIT BREAKER] HỆ THỐNG ĐÃ THỨC DẬY.`);
             this.consecutiveFailures = 0; 
             this.isHibernating = false;   
             this.hibernationStats = null;
+            this.hibernationTimer = null; // Xóa tham chiếu
             
             // Báo cho Frontend biết đã thức
             this.emit('systemStatusChanged', this.getSystemStatus());
@@ -139,6 +169,11 @@ export class QueueManager extends EventEmitter {
             };
 
             try {
+                // [CHỐT CHẶN VẬT LÝ] Kiểm tra file có tồn tại trên ổ cứng không
+                if (!fs.existsSync(nextJob.filePath)) {
+                    throw new Error('FILE_NOT_FOUND_ON_DISK');
+                }
+
                 emitLog(`Đang đọc file...`);
                 const fileBuffer = fs.readFileSync(nextJob.filePath);
                 emitLog(`Đang băm PDF...`);
@@ -153,7 +188,7 @@ export class QueueManager extends EventEmitter {
                 // [THÀNH CÔNG] Reset toàn bộ bộ đếm Circuit Breaker về mức an toàn
                 this.consecutiveFailures = 0;
                 this.hibernationLevel = 1; 
-                this.hibernationCount = 0; // Đã dịch thành công thì reset bộ đếm chu kỳ ngủ
+                this.hibernationCount = 0; 
 
                 if (fs.existsSync(nextJob.filePath)) {
                     fs.unlinkSync(nextJob.filePath);
@@ -161,11 +196,19 @@ export class QueueManager extends EventEmitter {
 
             } catch (error) {
                 nextJob.status = 'failed';
-                nextJob.error = error.message;
-                await nextJob.save();
-                emitLog(`❌ Lỗi: ${error.message}`);
                 
-                this.consecutiveFailures++;
+                // [LỌC LỖI] Chỉ tính lỗi API mới kích hoạt ngủ đông
+                if (error.message === 'FILE_NOT_FOUND_ON_DISK') {
+                    nextJob.error = 'File gốc bị mất do Server khởi động lại. Vui lòng dọn dẹp và tải lại.';
+                    emitLog(`❌ Lỗi: File vật lý đã bị Cloud xóa.`);
+                    // TUYỆT ĐỐI KHÔNG tăng biến this.consecutiveFailures ở đây
+                } else {
+                    nextJob.error = error.message;
+                    emitLog(`❌ Lỗi: ${error.message}`);
+                    this.consecutiveFailures++; // Tăng đếm lỗi với các lỗi API thực sự
+                }
+                
+                await nextJob.save();
             } finally {
                 this.emit('jobUpdated', nextJob); 
                 this.isProcessing = false;

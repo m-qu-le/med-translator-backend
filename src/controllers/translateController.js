@@ -145,3 +145,17 @@ export const getSystemStatus = (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+// [THÊM MỚI] API 8: Ép hệ thống thức dậy thủ công
+export const forceWakeUpSystem = (req, res) => {
+    try {
+        const isWokenUp = translationQueue.forceWakeUp();
+        if (isWokenUp) {
+            res.status(200).json({ message: 'Đã ép hệ thống thức dậy thành công!' });
+        } else {
+            res.status(400).json({ message: 'Hệ thống hiện không ở trạng thái ngủ đông.' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
