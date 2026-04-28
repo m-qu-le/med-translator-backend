@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 const jobSchema = new mongoose.Schema({
     jobId: { type: String, required: true, unique: true }, // Tương ứng filename của Multer
     originalName: { type: String, required: true },
+    folderName: { type: String, default: 'Mặc định' }, // [THÊM MỚI] Nhóm các file lại thành thư mục
     filePath: { type: String, required: true },
     status: { 
         type: String, 

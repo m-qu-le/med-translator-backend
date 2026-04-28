@@ -25,11 +25,12 @@ export class QueueManager extends EventEmitter {
     }
 
     // Chuyển thành Async Function
-    async addJob(file) {
+    async addJob(file, folderName) { // [SỬA ĐỔI] Nhận thêm tham số folderName từ Controller
         // Lưu thẳng vào MongoDB
         const job = new Job({
             jobId: file.filename,
             originalName: file.originalname,
+            folderName: folderName, // [THÊM MỚI] Gắn nhãn thư mục vào Document
             filePath: file.path,
             status: 'pending'
         });
@@ -41,7 +42,8 @@ export class QueueManager extends EventEmitter {
 
     async getJobsSummary() {
         // Sắp xếp các job mới nhất lên đầu, giới hạn lấy các trường nhẹ
-        const jobs = await Job.find({}, 'jobId originalName status error').sort({ createdAt: -1 });
+        // [SỬA ĐỔI] Bổ sung 'folderName' vào chuỗi Projection
+        const jobs = await Job.find({}, 'jobId originalName folderName status error').sort({ createdAt: -1 });
         return jobs;
     }
 

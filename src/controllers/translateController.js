@@ -8,13 +8,22 @@ export const uploadFiles = async (req, res) => {
             return res.status(400).json({ error: 'Không tìm thấy file nào được tải lên.' });
         }
 
+        // [THÊM MỚI] Trích xuất tên thư mục từ request, nếu không có thì để "Mặc định"
+        const folderName = req.body.folderName || 'Mặc định';
+
         const jobs = await Promise.all(
-            req.files.map(file => translationQueue.addJob(file))
+            // [SỬA ĐỔI] Truyền thêm folderName vào hàng đợi
+            req.files.map(file => translationQueue.addJob(file, folderName))
         );
         
         res.status(200).json({ 
             message: 'Đã đưa vào hàng chờ xử lý trên Cloud/Database', 
-            jobs: jobs.map(j => ({ jobId: j.jobId, originalName: j.originalName, status: j.status })) 
+            jobs: jobs.map(j => ({ 
+                jobId: j.jobId, 
+                originalName: j.originalName, 
+                status: j.status,
+                folderName: j.folderName 
+            })) 
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
