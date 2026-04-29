@@ -3,6 +3,7 @@ import fs from 'fs';
 import { processPdf } from './pdfService.js';
 import { processTranslation } from './geminiService.js';
 import Job from '../models/jobModel.js'; 
+import System from '../models/systemModel.js'; // [THÊM MỚI] Import model System
 
 export class QueueManager extends EventEmitter {
     constructor() {
@@ -14,28 +15,51 @@ export class QueueManager extends EventEmitter {
         this.isHibernating = false;     
         this.hibernationLevel = 1;      
         
-        // [THÊM MỚI] Dữ liệu giám sát ngủ đông để gửi cho Frontend
-        this.hibernationCount = 0; // Đếm số lần đã đi ngủ
-        this.hibernationStats = null; // Lưu chi tiết thời gian
+        // Dữ liệu giám sát ngủ đông để gửi cho Frontend
+        this.hibernationCount = 0; 
+        this.hibernationStats = null; 
         
-        // [THÊM MỚI] Lưu trữ tham chiếu Timeout để hủy khi cần Ép thức dậy
+        // Lưu trữ tham chiếu Timeout để hủy khi cần Ép thức dậy
         this.hibernationTimer = null; 
     }
 
     async initDB() {
         try {
+            // 1. Khôi phục Jobs
             const result = await Job.updateMany({ status: 'processing' }, { $set: { status: 'pending' } });
             if (result.modifiedCount > 0) {
                 console.log(`♻️ [QUEUE] Đã khôi phục ${result.modifiedCount} tác vụ (Zombie Jobs) về trạng thái Pending.`);
             }
+
+            // 2. [QUAN TRỌNG] Khôi phục trạng thái Ngủ đông từ Database
+            const sysState = await System.findOne({ key: 'circuit_breaker' });
+            if (sysState && sysState.isHibernating) {
+                const now = new Date();
+                const wakeupTime = new Date(sysState.stats.wakeupTime);
+
+                if (wakeupTime > now) {
+                    // Nếu vẫn chưa đến giờ thức dậy, thiết lập lại bộ đếm ngủ đông
+                    this.isHibernating = true;
+                    this.hibernationStats = sysState.stats;
+                    this.hibernationCount = sysState.stats.hibernationCount;
+
+                    const remainingMs = wakeupTime - now;
+                    this.hibernationTimer = setTimeout(() => this.wakeUp(), remainingMs);
+                    console.log(`🛑 [RESTORE] Hệ thống vẫn đang trong thời gian ngủ đông. Sẽ thức dậy sau ${Math.round(remainingMs/60000)} phút.`);
+                } else {
+                    // Nếu đã quá giờ thức dậy trong lúc server đang tắt, ép thức dậy luôn
+                    await this.forceWakeUp();
+                }
+            }
+
             this.startFailedJobsSweeper();
             this.startWorker(); 
         } catch (error) {
-            console.error('❌ [QUEUE] Lỗi khi khôi phục Zombie Jobs:', error);
+            console.error('❌ [QUEUE] Lỗi khi khởi tạo DB:', error);
         }
     }
 
-    // [THÊM MỚI] API Nội bộ cho Controller lấy trạng thái hiện tại
+    // API Nội bộ cho Controller lấy trạng thái hiện tại
     getSystemStatus() {
         return {
             isHibernating: this.isHibernating,
@@ -43,28 +67,14 @@ export class QueueManager extends EventEmitter {
         };
     }
 
-    // [THÊM MỚI] Hàm ép hệ thống thức dậy ngay lập tức
-    forceWakeUp() {
+    // Hàm ép hệ thống thức dậy ngay lập tức
+    async forceWakeUp() {
         if (!this.isHibernating) return false;
 
         console.log(`\n⚡ [CIRCUIT BREAKER] ÉP THỨC DẬY THỦ CÔNG (FORCE WAKE-UP)!`);
         
-        // Hủy bỏ bộ đếm thời gian ngủ đông đang chạy
-        if (this.hibernationTimer) {
-            clearTimeout(this.hibernationTimer);
-            this.hibernationTimer = null;
-        }
-
-        // Reset toàn bộ trạng thái lỗi
-        this.consecutiveFailures = 0;
-        this.isHibernating = false;
-        this.hibernationStats = null;
-
-        // Bắn tín hiệu sang Controller để cập nhật UI ngay lập tức
-        this.emit('systemStatusChanged', this.getSystemStatus());
-        
-        // Khởi động lại luồng xử lý
-        this.startWorker();
+        if (this.hibernationTimer) clearTimeout(this.hibernationTimer);
+        await this.wakeUp(); // Tái sử dụng hàm wakeUp
         return true;
     }
 
@@ -87,44 +97,49 @@ export class QueueManager extends EventEmitter {
         }, 15 * 60 * 1000);
     }
 
-    triggerHibernation() {
+    async triggerHibernation() {
         this.isHibernating = true; 
-        this.hibernationCount++; // Tăng số chu kỳ đã ngủ
+        this.hibernationCount++;
         
-        const sleepHours = this.hibernationLevel === 1 ? 1 : 2;
+        const sleepHours = 4; // Cố định ngủ 4 tiếng
         const sleepMs = sleepHours * 60 * 60 * 1000;
         
-        // Cập nhật thống kê
+        // Lưu chuẩn ISO để Frontend tự parse theo múi giờ địa phương
         this.hibernationStats = {
             startTime: new Date().toISOString(),
-            wakeupTime: new Date(Date.now() + sleepMs).toLocaleTimeString('vi-VN'),
+            wakeupTime: new Date(Date.now() + sleepMs).toISOString(),
             sleepHours: sleepHours,
             hibernationCount: this.hibernationCount
         };
 
-        // Bắn tín hiệu sang Controller để đẩy xuống SSE Frontend
-        this.emit('systemStatusChanged', this.getSystemStatus());
-        
+        // Lưu xuống MongoDB
+        await System.findOneAndUpdate(
+            { key: 'circuit_breaker' },
+            { isHibernating: true, stats: this.hibernationStats },
+            { upsert: true }
+        );
+
         console.log(`\n🛑 [CIRCUIT BREAKER] KÍCH HOẠT NGỦ ĐÔNG!`);
-        console.log(`   Thời gian ngủ: ${sleepHours} tiếng. Thức dậy lúc: ${this.hibernationStats.wakeupTime}`);
+        console.log(`   Thời gian ngủ: ${sleepHours} tiếng.`);
         console.log(`   Chu kỳ ngủ thứ: ${this.hibernationCount}\n`);
 
-        if (this.hibernationLevel === 1) {
-            this.hibernationLevel = 2;
-        }
+        this.emit('systemStatusChanged', this.getSystemStatus());
+        
+        this.hibernationTimer = setTimeout(() => this.wakeUp(), sleepMs);
+    }
 
-        // Gắn biến this.hibernationTimer thay vì gọi setTimeout trơn
-        this.hibernationTimer = setTimeout(() => {
-            console.log(`\n🟢 [CIRCUIT BREAKER] HỆ THỐNG ĐÃ THỨC DẬY.`);
-            this.consecutiveFailures = 0; 
-            this.isHibernating = false;   
-            this.hibernationStats = null;
-            this.hibernationTimer = null; // Xóa tham chiếu
-            
-            // Báo cho Frontend biết đã thức
-            this.emit('systemStatusChanged', this.getSystemStatus());
-            this.startWorker();           
-        }, sleepMs);
+    // Hàm wakeUp phụ trợ
+    async wakeUp() {
+        console.log(`\n🟢 [CIRCUIT BREAKER] HỆ THỐNG ĐÃ THỨC DẬY.`);
+        this.consecutiveFailures = 0; 
+        this.isHibernating = false;   
+        this.hibernationStats = null;
+        this.hibernationTimer = null;
+
+        await System.findOneAndUpdate({ key: 'circuit_breaker' }, { isHibernating: false, stats: null });
+        
+        this.emit('systemStatusChanged', this.getSystemStatus());
+        this.startWorker();
     }
 
     async addJob(file, folderName) {
@@ -214,7 +229,7 @@ export class QueueManager extends EventEmitter {
                 this.isProcessing = false;
                 
                 if (this.consecutiveFailures >= 10) {
-                    this.triggerHibernation(); 
+                    await this.triggerHibernation(); 
                 } else {
                     this.startWorker(); 
                 }
