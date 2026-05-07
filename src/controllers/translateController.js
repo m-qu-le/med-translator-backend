@@ -1,5 +1,6 @@
 import { translationQueue } from '../services/queueManager.js';
 import Job from '../models/jobModel.js';
+import fs from 'fs'; // [THÊM DÒNG NÀY] Import fs để dọn dẹp file PDF vật lý trên ổ cứng
 
 // API 1: Bọc try-catch, dùng Promise.all để ghi đa file vào DB
 export const uploadFiles = async (req, res) => {
@@ -159,5 +160,36 @@ export const forceWakeUpSystem = async (req, res) => {
         }
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+};
+
+// [THÊM MỚI] API 9: Xóa toàn bộ hàng đợi của một thư mục (Bao gồm DB và File vật lý)
+export const deleteFolderQueue = async (req, res) => {
+    try {
+        const { folderName } = req.params;
+        
+        // 1. Tìm tất cả các tiến trình thuộc thư mục này để lấy đường dẫn file vật lý
+        const jobsToDelete = await Job.find({ folderName });
+        
+        // 2. Dọn dẹp ổ cứng: Quét và xóa toàn bộ file PDF còn tồn đọng
+        jobsToDelete.forEach(job => {
+            if (job.filePath && fs.existsSync(job.filePath)) {
+                try { 
+                    fs.unlinkSync(job.filePath); 
+                } catch (e) { 
+                    console.error(`[Garbage Collection] Lỗi xóa file vật lý ${job.filePath}:`, e); 
+                }
+            }
+        });
+
+        // 3. Xóa triệt để các Document trong MongoDB
+        const result = await Job.deleteMany({ folderName });
+        
+        res.status(200).json({ 
+            message: `Đã xóa hoàn toàn thư mục [${folderName}] với ${result.deletedCount} tiến trình.`, 
+            deletedCount: result.deletedCount 
+        });
+    } catch (error) {
+         res.status(500).json({ error: error.message });
     }
 };

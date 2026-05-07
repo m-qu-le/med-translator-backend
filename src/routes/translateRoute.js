@@ -8,7 +8,8 @@ import {
     deleteJob,
     bulkDeleteJobs,
     getSystemStatus,
-    forceWakeUpSystem // [THÊM MỚI] Import hàm ép thức dậy
+    forceWakeUpSystem, // [THÊM MỚI] Import hàm ép thức dậy
+    deleteFolderQueue // [THÊM DÒNG NÀY]
 } from '../controllers/translateController.js'; 
 
 const router = express.Router();
@@ -36,5 +37,8 @@ router.delete('/jobs/:jobId', deleteJob);
 // [THÊM MỚI] 6. API Ép hệ thống thức dậy thủ công
 // Gọi POST /force-wakeup để hủy trạng thái ngủ đông
 router.post('/force-wakeup', forceWakeUpSystem);
+
+// [THÊM MỚI] 7. API Xóa toàn bộ hàng đợi thư mục (Nhận folderName qua URL params)
+router.delete('/folder/:folderName', deleteFolderQueue);
 
 export default router;
