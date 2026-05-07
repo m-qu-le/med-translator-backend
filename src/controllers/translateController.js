@@ -147,9 +147,11 @@ export const getSystemStatus = (req, res) => {
 };
 
 // [THÊM MỚI] API 8: Ép hệ thống thức dậy thủ công
-export const forceWakeUpSystem = (req, res) => {
+export const forceWakeUpSystem = async (req, res) => {
     try {
-        const isWokenUp = translationQueue.forceWakeUp();
+        // Cần await vì forceWakeUp trong queueManager.js là hàm async
+        const isWokenUp = await translationQueue.forceWakeUp();
+        
         if (isWokenUp) {
             res.status(200).json({ message: 'Đã ép hệ thống thức dậy thành công!' });
         } else {
