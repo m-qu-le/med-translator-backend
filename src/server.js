@@ -1,4 +1,3 @@
-import './test-keys.js';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import dotenv from 'dotenv';
