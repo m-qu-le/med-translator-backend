@@ -109,7 +109,9 @@ async function callGeminiWithKeyRotation(base64Data, chunkLabel, emitLog) {
                 if (status === 429 || status === 503) {
                     if (retries < maxRetriesPerKey) {
                         retries++;
-                        const waitTime = retries * 3000; 
+                        // [ĐÃ SỬA]: Thay đổi hệ số nhân từ 3000 thành 12000
+                        const waitTime = retries * 12000; 
+                        
                         emitLog(`⚠️ [${chunkLabel}] API Key ${attemptingKeyIndex + 1} đang bận (Lỗi ${status}). Đợi ${waitTime/1000}s thử lại lần ${retries}/${maxRetriesPerKey}...`);
                         await delay(waitTime);
                     } else {
