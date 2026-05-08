@@ -10,7 +10,7 @@ const getApiKeys = () => {
     return keys;
 };
 
-const TARGET_MODEL = 'gemini-3.1-flash-lite-preview'; 
+const TARGET_MODEL = 'gemini-3.1-flash-lite'; 
 let currentKeyIndex = 0;
 
 const SYSTEM_INSTRUCTION = `
