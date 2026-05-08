@@ -83,10 +83,17 @@ export class QueueManager extends EventEmitter {
             if (this.isHibernating) return; 
             try {
                 const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000);
+                
+                // [CẬP NHẬT FIX LỖI] Bỏ qua các tác vụ bị mất file vật lý để ngăn chặn Zombie Loop
                 const result = await Job.updateMany(
-                    { status: 'failed', updatedAt: { $lte: thirtyMinsAgo } },
+                    { 
+                        status: 'failed', 
+                        updatedAt: { $lte: thirtyMinsAgo },
+                        error: { $ne: 'File gốc bị mất do Server khởi động lại. Vui lòng dọn dẹp và tải lại.' } 
+                    },
                     { $set: { status: 'pending', error: '🔄 Tự động thử lại sau 30 phút...' } }
                 );
+                
                 if (result.modifiedCount > 0) {
                     console.log(`\n♻️ [AUTO-RECOVERY] Đã tìm thấy và đưa ${result.modifiedCount} files bị lỗi tạm thời quay lại hàng đợi.`);
                     this.startWorker(); 
