@@ -163,7 +163,10 @@ export class QueueManager extends EventEmitter {
     }
 
     async getJobsSummary() {
-        return await Job.find({}, 'jobId originalName folderName status error').sort({ createdAt: -1 });
+        // [CẬP NHẬT FIX LỖI] Vượt rào 32MB RAM Limit: Ép MongoDB sử dụng ổ cứng tạm (Disk) để sắp xếp dữ liệu
+        return await Job.find({}, 'jobId originalName folderName status error')
+            .sort({ createdAt: -1 })
+            .allowDiskUse(true);
     }
 
     async getJobResult(jobId) {
